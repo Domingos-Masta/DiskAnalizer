@@ -443,11 +443,13 @@ struct JunkView: View {
                         } label: { Image(systemName: "magnifyingglass.circle") }
                             .buttonStyle(.borderless)
                             .help("Reveal in Finder")
-                        Button(role: .destructive) {
-                            scanner.trash([item.url]) { scanner.removeJunkItem(item.url) }
-                        } label: { Image(systemName: "trash") }
-                            .buttonStyle(.borderless)
-                            .help("Move to Trash")
+                        if item.category != .universal {
+                            Button(role: .destructive) {
+                                scanner.trash([item.url]) { scanner.removeJunkItem(item.url) }
+                            } label: { Image(systemName: "trash") }
+                                .buttonStyle(.borderless)
+                                .help("Move to Trash")
+                        }
                     }
                     .padding(.vertical, 3)
                 }
