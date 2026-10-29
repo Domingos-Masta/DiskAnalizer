@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        applyAppIcon()
         let w = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1150, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -36,6 +37,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    @MainActor
+    private func applyAppIcon() {
+        guard let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+              let icon = NSImage(contentsOf: iconURL) else { return }
+        NSApp.applicationIconImage = icon
+    }
 
     @MainActor
     private func showWindow() {

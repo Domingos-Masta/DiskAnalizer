@@ -77,4 +77,7 @@ printf 'APPL????' > "$CONTENTS/PkgInfo"
 # Ad-hoc code sign so the app launches locally without a developer identity.
 codesign --force --sign - "$BUNDLE"
 
+# Bump the bundle's modification time so Finder refreshes its cached icon.
+touch "$BUNDLE"
+
 echo "Built: $BUNDLE"
