@@ -11,6 +11,7 @@ enum DiskScreen: String, CaseIterable, Identifiable {
     case duplicates = "Duplicates"
     case junk = "Junk & Caches"
     case unusedApps = "Unused Apps"
+    case spaceLens = "Space Lens"
     case memory = "Memory"
     case cleaner = "Cleaner"
     case about = "About"
@@ -24,6 +25,7 @@ enum DiskScreen: String, CaseIterable, Identifiable {
         case .duplicates: return "doc.on.doc.fill"
         case .junk:       return "trash.fill"
         case .unusedApps: return "app.badge"
+        case .spaceLens:  return "square.grid.3x3.fill"
         case .memory:     return "memorychip"
         case .cleaner:    return "sparkles"
         case .about:      return "info.circle"
@@ -150,8 +152,18 @@ struct FileRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(file.name).font(.body.weight(.medium))
                     .lineLimit(1).truncationMode(.middle)
-                Text(file.folder).font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(1).truncationMode(.middle)
+                HStack(spacing: 6) {
+                    Text(file.folder).font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                    if file.category != .other {
+                        Text(file.category.rawValue)
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.14))
+                            .foregroundStyle(Color.accentColor)
+                            .clipShape(Capsule())
+                    }
+                }
             }
             Spacer()
             Text(file.size.formattedBytes)
@@ -237,6 +249,12 @@ struct OverviewView: View {
 
 struct LargeFilesView: View {
     @ObservedObject var scanner: DiskScanner
+    @State private var categoryFilter: FileCategory?
+
+    private var filteredFiles: [FileEntry] {
+        guard let filter = categoryFilter else { return scanner.largeFiles }
+        return scanner.largeFiles.filter { $0.category == filter }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -244,7 +262,15 @@ struct LargeFilesView: View {
                 Text("Large Files").font(.largeTitle.bold())
                 Spacer()
                 if !scanner.largeFiles.isEmpty {
-                    Text("\(scanner.largeFiles.count) files")
+                    Picker("Filter", selection: $categoryFilter) {
+                        Text("All").tag(FileCategory?.none)
+                        ForEach(FileCategory.allCases, id: \.self) { category in
+                            Text(category.rawValue).tag(FileCategory?.some(category))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 150)
+                    Text("\(filteredFiles.count) files")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -253,7 +279,7 @@ struct LargeFilesView: View {
             if scanner.largeFiles.isEmpty {
                 EmptyState(text: "No large files found in the scanned folder.")
             } else {
-                List(scanner.largeFiles) { file in
+                List(filteredFiles) { file in
                     FileRow(file: file) {
                         scanner.trash([file.url]) { scanner.removeFile(file.url) }
                     }
@@ -285,8 +311,18 @@ struct OldFilesView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(file.name).font(.body.weight(.medium))
                                 .lineLimit(1).truncationMode(.middle)
-                            Text(file.folder).font(.caption).foregroundStyle(.secondary)
-                                .lineLimit(1).truncationMode(.middle)
+                            HStack(spacing: 6) {
+                                Text(file.folder).font(.caption).foregroundStyle(.secondary)
+                                    .lineLimit(1).truncationMode(.middle)
+                                if file.category != .other {
+                                    Text(file.category.rawValue)
+                                        .font(.caption2.bold())
+                                        .padding(.horizontal, 5).padding(.vertical, 1)
+                                        .background(Color.accentColor.opacity(0.14))
+                                        .foregroundStyle(Color.accentColor)
+                                        .clipShape(Capsule())
+                                }
+                            }
                         }
                         Spacer()
                         Text("last opened \(file.accessed.formatted(date: .abbreviated, time: .omitted))")
@@ -378,40 +414,56 @@ struct JunkView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Junk & Caches").font(.largeTitle.bold())
-                Text("Caches, logs, trash and Xcode build artifacts. Moving these to Trash is usually safe.")
+                Text("System Junk").font(.largeTitle.bold())
+                Text("User caches, logs, Xcode build artifacts, software update leftovers, mail downloads and universal binaries. Review before cleaning.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .padding(24)
 
-            if scanner.junkFolders.isEmpty {
-                EmptyState(text: "No known junk folders found.")
+            if scanner.junkItems.isEmpty {
+                EmptyState(text: "No system junk found.")
             } else {
-                List(scanner.junkFolders) { folder in
+                List(scanner.junkItems) { item in
                     HStack(spacing: 12) {
-                        Image(systemName: "trash.fill").foregroundStyle(.orange)
+                        Image(systemName: icon(for: item.category)).foregroundStyle(.orange)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(folder.url.lastPathComponent).font(.body.weight(.medium))
-                            Text(folder.url.displayPath).font(.caption).foregroundStyle(.secondary)
+                            Text(item.name).font(.body.weight(.medium))
+                                .lineLimit(1).truncationMode(.middle)
+                            Text("\(item.category.rawValue) — \(item.url.displayPath)")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .lineLimit(1).truncationMode(.middle)
                         }
                         Spacer()
-                        Text(folder.size.formattedBytes)
+                        Text(item.size.formattedBytes)
                             .font(.callout.monospacedDigit())
                             .foregroundStyle(.secondary)
                             .frame(width: 90, alignment: .trailing)
                         Button {
-                            NSWorkspace.shared.activateFileViewerSelecting([folder.url])
+                            NSWorkspace.shared.activateFileViewerSelecting([item.url])
                         } label: { Image(systemName: "magnifyingglass.circle") }
                             .buttonStyle(.borderless)
+                            .help("Reveal in Finder")
                         Button(role: .destructive) {
-                            scanner.trash([folder.url]) { scanner.removeJunkFolder(folder.url) }
+                            scanner.trash([item.url]) { scanner.removeJunkItem(item.url) }
                         } label: { Image(systemName: "trash") }
                             .buttonStyle(.borderless)
+                            .help("Move to Trash")
                     }
                     .padding(.vertical, 3)
                 }
                 .listStyle(.inset)
             }
+        }
+    }
+
+    private func icon(for category: JunkCategory) -> String {
+        switch category {
+        case .caches:         return "internaldrive"
+        case .logs:           return "doc.text"
+        case .xcode:          return "hammer"
+        case .softwareUpdate: return "arrow.down.circle"
+        case .mail:           return "envelope"
+        case .universal:      return "cpu"
         }
     }
 }
@@ -568,6 +620,8 @@ struct CleanerView: View {
                         Text(scanner.trashSize.formattedBytes)
                             .foregroundStyle(.secondary)
                         Button("Empty Trash") { scanner.emptyTrash() }
+                        Button("Empty All Bins") { scanner.emptyAllTrashBins() }
+                            .help("Empty the user Trash and per-volume Trash folders on all mounted disks")
                     }
                 }
 
@@ -650,6 +704,127 @@ struct CleanerView: View {
     }
 }
 
+private struct TreemapRect {
+    let folder: FolderSize
+    let rect: CGRect
+}
+
+struct SpaceLensView: View {
+    @ObservedObject var scanner: DiskScanner
+    @State private var selectedFolder: FolderSize?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Space Lens").font(.largeTitle.bold())
+                Spacer()
+                Text("Top folders in \(scanner.rootURL?.displayPath ?? "scanned folder")")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            .padding(24)
+
+            if scanner.topFolders.isEmpty {
+                EmptyState(text: "Run a scan to see the storage map.")
+            } else {
+                let folders = Array(scanner.topFolders.prefix(40))
+                GeometryReader { geo in
+                    let layout = Self.treemap(folders, in: CGRect(origin: .zero, size: geo.size))
+                    Canvas { context, _ in
+                        for (index, item) in layout.enumerated() {
+                            let rect = item.rect.insetBy(dx: 1.5, dy: 1.5)
+                            guard rect.width > 1, rect.height > 1 else { continue }
+                            let path = Path(roundedRect: rect, cornerRadius: 5)
+                            context.fill(path, with: .color(Self.color(index)))
+                            if rect.width > 70, rect.height > 26 {
+                                context.draw(
+                                    Text(item.folder.url.lastPathComponent)
+                                        .font(.caption2.bold())
+                                        .foregroundColor(.white),
+                                    at: CGPoint(x: rect.midX, y: rect.midY)
+                                )
+                            }
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { location in
+                        if let hit = layout.first(where: { $0.rect.contains(location) }) {
+                            selectedFolder = hit.folder
+                        }
+                    }
+                }
+                .frame(minHeight: 360)
+                .padding(.horizontal, 24)
+
+                if let selected = selectedFolder {
+                    HStack(spacing: 12) {
+                        Text(selected.url.displayPath)
+                            .lineLimit(1).truncationMode(.middle)
+                        Text(selected.size.formattedBytes)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Reveal in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([selected.url])
+                        }
+                    }
+                    .padding(24)
+                }
+            }
+        }
+    }
+
+    private static func color(_ index: Int) -> Color {
+        let palette: [Color] = [.blue, .purple, .indigo, .cyan, .mint, .pink, .orange, .teal]
+        return palette[index % palette.count].opacity(0.8)
+    }
+
+    /// Slice-and-dice treemap: recursively splits the rectangle in alternating
+    /// horizontal/vertical directions, proportional to each folder's size.
+    private static func treemap(_ items: [FolderSize], in rect: CGRect, depth: Int = 0) -> [TreemapRect] {
+        guard !items.isEmpty, rect.width > 0, rect.height > 0 else { return [] }
+        let total = items.reduce(Int64(0)) { $0 + $1.size }
+        guard total > 0 else { return [] }
+
+        let sorted = items.sorted { $0.size > $1.size }
+        if sorted.count == 1 {
+            return [TreemapRect(folder: sorted[0], rect: rect)]
+        }
+
+        var splitIndex = 0
+        var accumulated: Int64 = 0
+        let half = Double(total) / 2.0
+        for (index, item) in sorted.enumerated() {
+            accumulated += item.size
+            splitIndex = index
+            if Double(accumulated) >= half { break }
+        }
+        let left = Array(sorted[0...splitIndex])
+        let right = Array(sorted[(splitIndex + 1)...])
+        guard !left.isEmpty, !right.isEmpty else {
+            return [TreemapRect(folder: sorted[0], rect: rect)]
+        }
+
+        let leftTotal = left.reduce(Int64(0)) { $0 + $1.size }
+        let ratio = CGFloat(Double(leftTotal) / Double(total))
+
+        let horizontal = depth.isMultiple(of: 2)
+        if horizontal {
+            let leftRect = CGRect(x: rect.minX, y: rect.minY,
+                                  width: rect.width * ratio, height: rect.height)
+            let rightRect = CGRect(x: rect.minX + rect.width * ratio, y: rect.minY,
+                                   width: rect.width * (1 - ratio), height: rect.height)
+            return treemap(left, in: leftRect, depth: depth + 1)
+                + treemap(right, in: rightRect, depth: depth + 1)
+        } else {
+            let leftRect = CGRect(x: rect.minX, y: rect.minY,
+                                  width: rect.width, height: rect.height * ratio)
+            let rightRect = CGRect(x: rect.minX, y: rect.minY + rect.height * ratio,
+                                   width: rect.width, height: rect.height * (1 - ratio))
+            return treemap(left, in: leftRect, depth: depth + 1)
+                + treemap(right, in: rightRect, depth: depth + 1)
+        }
+    }
+}
+
 struct AboutView: View {
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -693,7 +868,7 @@ struct ContentView: View {
             NavigationSplitView {
                 List(selection: $screen) {
                     Section("Analyze") {
-                        ForEach([DiskScreen.overview, .large, .old, .duplicates, .junk]) { s in
+                        ForEach([DiskScreen.overview, .spaceLens, .large, .old, .duplicates, .junk]) { s in
                             Label(s.rawValue, systemImage: s.icon)
                                 .tag(s)
                         }
@@ -716,6 +891,7 @@ struct ContentView: View {
             } detail: {
                 switch screen ?? .overview {
                 case .overview:   OverviewView(scanner: scanner)
+                case .spaceLens:  SpaceLensView(scanner: scanner)
                 case .large:      LargeFilesView(scanner: scanner)
                 case .old:        OldFilesView(scanner: scanner)
                 case .duplicates: DuplicatesView(scanner: scanner)

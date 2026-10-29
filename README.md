@@ -5,13 +5,14 @@ A lightweight macOS disk-space analyzer and system cleaner built with SwiftUI.
 ## Features
 
 - **Overview** — total disk usage, file/folder counts, largest folders, and duplicate waste.
-- **Large Files** — find and remove the biggest files in the scanned folder.
-- **Unused Files** — files not accessed in 6+ months.
+- **Large Files** — find and remove the biggest files, with category badges (SQL dumps, media, archives, etc.) and filtering.
+- **Unused Files** — files not accessed in 6+ months, with category badges.
 - **Duplicates** — content-hashed duplicate detection (files ≥ 1 MB).
-- **Junk & Caches** — caches, logs, and Xcode build artifacts.
+- **Space Lens** — an interactive treemap of the largest folders in the scanned disk; click a block to reveal it in Finder.
+- **System Junk** — user caches, logs, Xcode build artifacts, software update leftovers, mail downloads, and universal binaries.
 - **Unused Apps** — apps not opened in 6+ months, with uninstall (move to Trash).
 - **Memory** — memory stats, pressure level, top 5 apps by RAM, and a "Free Up RAM" action.
-- **Cleaner** — user Trash size + "Empty Trash", and leftovers left behind by uninstalled apps.
+- **Cleaner** — user Trash + "Empty Trash"/"Empty All Bins" (all mounted disks), and leftovers left behind by uninstalled apps.
 - **Automatic daily cleaning** — schedules a daily run (while the app is open) to empty the Trash, clean leftovers, and optionally clear caches/logs. Configured from the Cleaner screen.
 - **Menu bar monitor** — a `rays` status item showing disk/memory/CPU and quick actions; toggle it from the top bar.
 - **Realtime alerts** — system notifications (plus in-app alerts) when the disk is almost full, memory is critically low, or CPU usage is high.

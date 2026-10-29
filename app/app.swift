@@ -19,7 +19,7 @@ final class DiskScanner: ObservableObject {
     @Published var largeFiles: [FileEntry] = []
     @Published var oldFiles: [FileEntry] = []
     @Published var duplicates: [DuplicateGroup] = []
-    @Published var junkFolders: [FolderSize] = []
+    @Published var junkItems: [JunkItem] = []
     @Published var duplicateWasted: Int64 = 0
 
     // MARK: Cleaner state
@@ -54,7 +54,7 @@ final class DiskScanner: ObservableObject {
         largeFiles = []
         oldFiles = []
         duplicates = []
-        junkFolders = []
+        junkItems = []
         duplicateWasted = 0
         rootURL = url
 
@@ -87,7 +87,7 @@ final class DiskScanner: ObservableObject {
         largeFiles = result.largeFiles
         oldFiles = result.oldFiles
         duplicates = result.duplicates
-        junkFolders = result.junkFolders
+        junkItems = result.junkItems
         duplicateWasted = result.duplicateWasted
         isScanning = false
         phase = .done
@@ -106,8 +106,8 @@ final class DiskScanner: ObservableObject {
         duplicateWasted = duplicates.reduce(0) { $0 + $1.wastedBytes }
     }
 
-    func removeJunkFolder(_ url: URL) {
-        junkFolders.removeAll { $0.url == url }
+    func removeJunkItem(_ url: URL) {
+        junkItems.removeAll { $0.url == url }
     }
 
     // MARK: Cleaner actions
@@ -196,6 +196,66 @@ final class DiskScanner: ObservableObject {
         }
     }
 
+    /// Empties the user's Trash plus the per-volume Trash folders on all mounted disks.
+    func emptyAllTrashBins() {
+        guard !isPerformingAction else { return }
+        let locations = Self.allTrashLocations()
+        var allItems: [URL] = []
+        for location in locations {
+            let items = (try? FileManager.default.contentsOfDirectory(
+                at: location,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            allItems.append(contentsOf: items)
+        }
+        guard !allItems.isEmpty else {
+            trashSize = 0
+            actionNotice = "All trash bins are already empty."
+            return
+        }
+
+        isPerformingAction = true
+        actionMessage = "Emptying all trash bins…"
+        actionProgress = 0
+
+        Task.detached(priority: .userInitiated) {
+            let total = allItems.count
+            for (index, item) in allItems.enumerated() {
+                try? FileManager.default.removeItem(at: item)
+                if index % 10 == 0 || index == total - 1 {
+                    let progress = Double(index + 1) / Double(total)
+                    await MainActor.run { [weak self] in
+                        self?.actionProgress = progress
+                    }
+                }
+            }
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.trashSize = 0
+                self.isPerformingAction = false
+                self.actionMessage = ""
+                self.actionNotice = "All trash bins emptied."
+            }
+        }
+    }
+
+    nonisolated static func allTrashLocations() -> [URL] {
+        let fm = FileManager.default
+        var locations: [URL] = [fm.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")]
+        let uid = String(getuid())
+        if let volumes = fm.mountedVolumeURLs(
+            includingResourceValuesForKeys: nil,
+            options: [.skipHiddenVolumes]
+        ) {
+            for volume in volumes {
+                locations.append(volume.appendingPathComponent(".Trashes").appendingPathComponent(uid))
+            }
+        }
+        return locations.filter { fm.fileExists(atPath: $0.path) }
+    }
+
     func cleanLeftovers() {
         let items = leftovers
         guard !items.isEmpty, !isPerformingAction else { return }
@@ -271,7 +331,7 @@ final class DiskScanner: ObservableObject {
         ) else {
             return ScanResult(total: 0, fileCount: 0, folderCount: 0,
                               topFolders: [], largeFiles: [], oldFiles: [],
-                              duplicates: [], junkFolders: [], duplicateWasted: 0)
+                              duplicates: [], junkItems: [], duplicateWasted: 0)
         }
 
         var counter = 0
@@ -366,7 +426,7 @@ final class DiskScanner: ObservableObject {
             largeFiles: largeFiles,
             oldFiles: oldFiles,
             duplicates: dupes,
-            junkFolders: junk,
+            junkItems: junk,
             duplicateWasted: dupWasted
         )
     }
@@ -385,23 +445,71 @@ final class DiskScanner: ObservableObject {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
-    nonisolated static func detectJunk() -> [FolderSize] {
+    nonisolated static func detectJunk() -> [JunkItem] {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
-        let candidates: [URL] = [
-            home.appendingPathComponent("Library/Caches"),
-            home.appendingPathComponent("Library/Logs"),
-            home.appendingPathComponent("Library/Developer/Xcode/DerivedData"),
-            home.appendingPathComponent("Library/Developer/CoreSimulator/Caches"),
+        let candidates: [(JunkCategory, URL)] = [
+            (.caches, home.appendingPathComponent("Library/Caches")),
+            (.logs, home.appendingPathComponent("Library/Logs")),
+            (.xcode, home.appendingPathComponent("Library/Developer/Xcode/DerivedData")),
+            (.xcode, home.appendingPathComponent("Library/Developer/CoreSimulator/Caches")),
+            (.softwareUpdate, home.appendingPathComponent("Library/Caches/com.apple.SoftwareUpdate")),
+            (.mail, home.appendingPathComponent("Library/Mail Downloads")),
+            (.mail, home.appendingPathComponent("Library/Containers/com.apple.mail/Data/Library/Mail Downloads")),
         ]
-        var out: [FolderSize] = []
-        for u in candidates {
-            guard fm.fileExists(atPath: u.path) else { continue }
-            if let s = folderSize(u), s > 0 {
-                out.append(FolderSize(url: u, size: s))
+
+        var out: [JunkItem] = []
+        for (category, url) in candidates {
+            guard fm.fileExists(atPath: url.path) else { continue }
+            if let size = folderSize(url), size > 0 {
+                out.append(JunkItem(name: url.lastPathComponent, url: url, size: size, category: category))
             }
         }
+
+        out.append(contentsOf: detectUniversalBinaries())
         return out.sorted { $0.size > $1.size }
+    }
+
+    /// Finds universal (multi-architecture) app executables that could be trimmed.
+    nonisolated static func detectUniversalBinaries() -> [JunkItem] {
+        let fm = FileManager.default
+        let dirs: [URL] = [
+            URL(fileURLWithPath: "/Applications"),
+            fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications"),
+        ]
+        var out: [JunkItem] = []
+        for dir in dirs {
+            let apps = (try? fm.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            for app in apps where app.pathExtension == "app" {
+                let executableName = app.deletingPathExtension().lastPathComponent
+                let executable = app
+                    .appendingPathComponent("Contents/MacOS")
+                    .appendingPathComponent(executableName)
+                guard fm.fileExists(atPath: executable.path), isUniversalBinary(executable) else { continue }
+                let size = Int64((try? executable.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+                out.append(JunkItem(name: executableName, url: executable, size: size, category: .universal))
+            }
+        }
+        return out
+    }
+
+    nonisolated static func isUniversalBinary(_ url: URL) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/lipo")
+        process.arguments = ["-archs", url.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return false }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let archs = String(data: data, encoding: .utf8) else { return false }
+        return archs.split(separator: " ").count > 1
     }
 
     nonisolated static func folderSize(_ url: URL) -> Int64? {
