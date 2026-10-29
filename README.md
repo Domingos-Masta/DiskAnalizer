@@ -8,7 +8,7 @@ A lightweight macOS disk-space analyzer and system cleaner built with SwiftUI.
 - **Large Files** — find and remove the biggest files, with category badges (SQL dumps, media, archives, etc.) and filtering.
 - **Unused Files** — files not accessed in 6+ months, with category badges.
 - **Duplicates** — content-hashed duplicate detection (files ≥ 1 MB).
-- **Space Lens** — an interactive treemap of the largest folders in the scanned disk; click a block to reveal it in Finder.
+- **Space Lens** — a CleanMyMac-style squarified treemap with hover inspection and breadcrumb navigation; click a folder to zoom in, click a file to reveal it in Finder.
 - **System Junk** — user caches, logs, Xcode build artifacts, software update leftovers, mail downloads, and universal binaries.
 - **Unused Apps** — apps not opened in 6+ months, with uninstall (move to Trash).
 - **Memory** — memory stats, pressure level, top 5 apps by RAM, and a "Free Up RAM" action.

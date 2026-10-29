@@ -531,6 +531,69 @@ final class DiskScanner: ObservableObject {
         return total
     }
 
+    /// Returns the immediate children of `url` with their total sizes, in a single pass.
+    nonisolated static func spaceNodes(in url: URL) -> [SpaceNode] {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [
+            .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
+            .fileSizeKey, .totalFileAllocatedSizeKey,
+        ]
+        var sizes: [String: Int64] = [:]
+        var isDirectory: [String: Bool] = [:]
+        var order: [String] = []
+
+        let rootPath = url.resolvingSymlinksInPath().path
+        let rootPrefix = rootPath + "/"
+
+        guard let enumerator = fm.enumerator(
+            at: url,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles],
+            errorHandler: nil
+        ) else { return [] }
+
+        for case let item as URL in enumerator {
+            let itemPath = item.resolvingSymlinksInPath().path
+            if itemPath == rootPath { continue }
+            guard itemPath.hasPrefix(rootPrefix) else { continue }
+            let relative = String(itemPath.dropFirst(rootPrefix.count))
+            let top = relative.split(separator: "/").first.map(String.init) ?? relative
+            guard !top.isEmpty else { continue }
+
+            guard let rv = try? item.resourceValues(forKeys: Set(keys)),
+                  rv.isSymbolicLink != true else { continue }
+
+            if rv.isDirectory == true {
+                if sizes[top] == nil {
+                    order.append(top)
+                    isDirectory[top] = true
+                    sizes[top] = 0
+                }
+                continue
+            }
+            guard rv.isRegularFile == true else { continue }
+
+            let size = Int64(rv.totalFileAllocatedSize ?? rv.fileSize ?? 0)
+            if sizes[top] == nil {
+                order.append(top)
+                isDirectory[top] = false
+                sizes[top] = 0
+            }
+            sizes[top, default: 0] += size
+        }
+
+        return order
+            .map { key in
+                SpaceNode(
+                    name: key,
+                    url: url.appendingPathComponent(key),
+                    size: sizes[key] ?? 0,
+                    isDirectory: isDirectory[key] ?? false
+                )
+            }
+            .sorted { $0.size > $1.size }
+    }
+
     // MARK: Cleaner helpers (background)
 
     nonisolated static func normalizedKey(_ string: String) -> String {

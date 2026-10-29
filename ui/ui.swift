@@ -706,123 +706,326 @@ struct CleanerView: View {
     }
 }
 
-private struct TreemapRect {
-    let folder: FolderSize
-    let rect: CGRect
+/// Squarified treemap layout (Bruls et al.) — produces rectangles with good aspect ratios.
+private enum Treemap {
+    static func layout(values: [Double], in rect: CGRect) -> [CGRect] {
+        var result = [CGRect](repeating: .zero, count: values.count)
+        guard !values.isEmpty, rect.width > 0, rect.height > 0 else { return result }
+        let total = values.reduce(0, +)
+        guard total > 0 else { return result }
+
+        let scale = Double(rect.width * rect.height) / total
+        let areas = values.map { $0 * scale }
+        let indices = Array(values.indices).sorted { values[$0] > values[$1] }
+        var remaining = indices
+        var currentRect = rect
+        var currentTotal = areas.reduce(0, +)
+
+        while !remaining.isEmpty {
+            let side = min(currentRect.width, currentRect.height)
+            var rowCount = 1
+            var bestWorst = worst(row: Array(remaining[0..<1]), areas: areas, side: side)
+
+            while rowCount < remaining.count {
+                let candidate = Array(remaining[0...rowCount])
+                let w = worst(row: candidate, areas: areas, side: side)
+                if w <= bestWorst {
+                    bestWorst = w
+                    rowCount += 1
+                } else {
+                    break
+                }
+            }
+
+            let row = Array(remaining[0..<rowCount])
+            let rowSum = row.reduce(0.0) { $0 + areas[$1] }
+            let rowFraction = rowSum / currentTotal
+
+            var rowRect = currentRect
+            if currentRect.width >= currentRect.height {
+                rowRect.size.width = currentRect.width * CGFloat(rowFraction)
+            } else {
+                rowRect.size.height = currentRect.height * CGFloat(rowFraction)
+            }
+
+            var offset: CGFloat = 0
+            for index in row {
+                var r = rowRect
+                let fraction = rowSum > 0 ? CGFloat(areas[index] / rowSum) : 0
+                if currentRect.width >= currentRect.height {
+                    r.origin.y = rowRect.minY + offset
+                    r.size.height = rowRect.height * fraction
+                } else {
+                    r.origin.x = rowRect.minX + offset
+                    r.size.width = rowRect.width * fraction
+                }
+                offset += (currentRect.width >= currentRect.height ? r.height : r.width)
+                result[index] = r
+            }
+
+            if currentRect.width >= currentRect.height {
+                currentRect.origin.x = rowRect.maxX
+                currentRect.size.width -= rowRect.width
+            } else {
+                currentRect.origin.y = rowRect.maxY
+                currentRect.size.height -= rowRect.height
+            }
+            currentTotal -= rowSum
+            remaining = Array(remaining[rowCount...])
+        }
+        return result
+    }
+
+    private static func worst(row: [Int], areas: [Double], side: CGFloat) -> CGFloat {
+        let s = row.reduce(0.0) { $0 + areas[$1] }
+        guard s > 0 else { return .greatestFiniteMagnitude }
+        let rowAreas = row.map { areas[$0] }
+        let rMax = rowAreas.max() ?? 0
+        let rMin = rowAreas.min() ?? 0
+        let w = Double(side)
+        let first = (w * w * rMax) / (s * s)
+        let second = (s * s) / (w * w * rMin)
+        return CGFloat(max(first, second))
+    }
+}
+
+@MainActor
+final class SpaceLensModel: ObservableObject {
+    @Published var path: [URL] = []
+    @Published var nodes: [SpaceNode] = []
+    @Published var isLoading = false
+    @Published var selectedNode: SpaceNode?
+
+    var rootURL: URL?
+    var topFolders: [FolderSize] = []
+
+    func configure(rootURL: URL?, topFolders: [FolderSize]) {
+        self.rootURL = rootURL
+        self.topFolders = topFolders
+        objectWillChange.send()
+    }
+
+    var displayNodes: [SpaceNode] {
+        if path.isEmpty {
+            return topFolders.map {
+                SpaceNode(name: $0.url.lastPathComponent, url: $0.url, size: $0.size, isDirectory: true)
+            }
+        }
+        return nodes
+    }
+
+    var totalSize: Int64 {
+        if path.isEmpty { return topFolders.reduce(0) { $0 + $1.size } }
+        return nodes.reduce(0) { $0 + $1.size }
+    }
+
+    func open(_ node: SpaceNode) {
+        selectedNode = node
+        guard node.isDirectory else {
+            NSWorkspace.shared.activateFileViewerSelecting([node.url])
+            return
+        }
+        path.append(node.url)
+        nodes = []
+        load(node.url)
+    }
+
+    func goBack() {
+        guard !path.isEmpty else { return }
+        path.removeLast()
+        nodes = []
+        selectedNode = nil
+        if let current = path.last { load(current) }
+    }
+
+    func goToRoot() {
+        path = []
+        nodes = []
+        selectedNode = nil
+    }
+
+    func goTo(index: Int) {
+        guard index >= 0, index < path.count else { return }
+        path = Array(path.prefix(index + 1))
+        nodes = []
+        selectedNode = nil
+        load(path[index])
+    }
+
+    private func load(_ url: URL) {
+        isLoading = true
+        Task.detached(priority: .userInitiated) {
+            let result = DiskScanner.spaceNodes(in: url)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.nodes = result
+                self.isLoading = false
+            }
+        }
+    }
 }
 
 struct SpaceLensView: View {
     @ObservedObject var scanner: DiskScanner
-    @State private var selectedFolder: FolderSize?
+    @StateObject private var model = SpaceLensModel()
+    @State private var hoveredNode: SpaceNode?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
+            header
+            Divider()
+
+            if model.path.isEmpty && model.displayNodes.isEmpty {
+                EmptyState(text: "Run a scan to see the storage map.")
+            } else if model.isLoading && model.displayNodes.isEmpty {
+                VStack {
+                    Spacer()
+                    ProgressView("Scanning folder…")
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                map
+                statusBar
+            }
+        }
+        .task(id: scanner.topFolders.count) {
+            model.configure(rootURL: scanner.rootURL, topFolders: scanner.topFolders)
+        }
+        .onAppear {
+            model.configure(rootURL: scanner.rootURL, topFolders: scanner.topFolders)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
                 Text("Space Lens").font(.largeTitle.bold())
                 Spacer()
-                Text("Top folders in \(scanner.rootURL?.displayPath ?? "scanned folder")")
-                    .font(.callout).foregroundStyle(.secondary)
+                if !model.path.isEmpty {
+                    Button { model.goBack() } label: { Label("Back", systemImage: "chevron.left") }
+                }
             }
-            .padding(24)
 
-            if scanner.topFolders.isEmpty {
-                EmptyState(text: "Run a scan to see the storage map.")
+            HStack(spacing: 4) {
+                Button("Home") { model.goToRoot() }
+                ForEach(Array(model.path.enumerated()), id: \.offset) { index, url in
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                    Button(url.lastPathComponent) { model.goTo(index: index) }
+                }
+                if model.isLoading {
+                    ProgressView().controlSize(.small).padding(.leading, 8)
+                }
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 12)
+    }
+
+    private var map: some View {
+        GeometryReader { geo in
+            let nodes = model.displayNodes
+            let values = nodes.map { Double($0.size) }
+            let layout = Treemap.layout(values: values, in: CGRect(origin: .zero, size: geo.size))
+
+            Canvas { context, _ in
+                for (index, node) in nodes.enumerated() where index < layout.count {
+                    let rect = layout[index].insetBy(dx: 1.5, dy: 1.5)
+                    guard rect.width > 1, rect.height > 1 else { continue }
+                    let shape = Path(roundedRect: rect, cornerRadius: 4)
+                    context.fill(shape, with: .color(Self.color(for: node, index: index)))
+                    if hoveredNode?.id == node.id || model.selectedNode?.id == node.id {
+                        context.stroke(shape, with: .color(.white), lineWidth: 2.5)
+                    }
+                    if rect.width > 60, rect.height > 22 {
+                        context.draw(
+                            Text(node.name)
+                                .font(.caption2.bold())
+                                .foregroundColor(.white),
+                            at: CGPoint(x: rect.midX, y: rect.midY)
+                        )
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
+                    hoveredNode = Self.hitTest(location: location, nodes: nodes, layout: layout)
+                case .ended:
+                    hoveredNode = nil
+                }
+            }
+            .onTapGesture { location in
+                if let node = Self.hitTest(location: location, nodes: nodes, layout: layout) {
+                    model.open(node)
+                }
+            }
+        }
+        .frame(minHeight: 360)
+        .padding(.horizontal, 24)
+    }
+
+    private var statusBar: some View {
+        let info = hoveredNode ?? model.selectedNode
+        return HStack(spacing: 12) {
+            if let info {
+                Image(systemName: info.isDirectory ? "folder.fill" : "doc.fill")
+                    .foregroundStyle(.secondary)
+                Text(info.name)
+                    .fontWeight(.medium)
+                    .lineLimit(1).truncationMode(.middle)
+                Text(info.size.formattedBytes)
+                    .foregroundStyle(.secondary)
+                if !info.isDirectory {
+                    Text(info.category.rawValue)
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.14))
+                        .foregroundStyle(Color.accentColor)
+                        .clipShape(Capsule())
+                }
+                Spacer()
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([info.url])
+                }
             } else {
-                let folders = Array(scanner.topFolders.prefix(40))
-                GeometryReader { geo in
-                    let layout = Self.treemap(folders, in: CGRect(origin: .zero, size: geo.size))
-                    Canvas { context, _ in
-                        for (index, item) in layout.enumerated() {
-                            let rect = item.rect.insetBy(dx: 1.5, dy: 1.5)
-                            guard rect.width > 1, rect.height > 1 else { continue }
-                            let path = Path(roundedRect: rect, cornerRadius: 5)
-                            context.fill(path, with: .color(Self.color(index)))
-                            if rect.width > 70, rect.height > 26 {
-                                context.draw(
-                                    Text(item.folder.url.lastPathComponent)
-                                        .font(.caption2.bold())
-                                        .foregroundColor(.white),
-                                    at: CGPoint(x: rect.midX, y: rect.midY)
-                                )
-                            }
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture { location in
-                        if let hit = layout.first(where: { $0.rect.contains(location) }) {
-                            selectedFolder = hit.folder
-                        }
-                    }
-                }
-                .frame(minHeight: 360)
-                .padding(.horizontal, 24)
-
-                if let selected = selectedFolder {
-                    HStack(spacing: 12) {
-                        Text(selected.url.displayPath)
-                            .lineLimit(1).truncationMode(.middle)
-                        Text(selected.size.formattedBytes)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Reveal in Finder") {
-                            NSWorkspace.shared.activateFileViewerSelecting([selected.url])
-                        }
-                    }
-                    .padding(24)
-                }
+                Text("Hover a block to inspect it · click a folder to zoom in · click a file to reveal it")
+                    .foregroundStyle(.secondary)
+                Spacer()
             }
         }
+        .padding(24)
     }
 
-    private static func color(_ index: Int) -> Color {
-        let palette: [Color] = [.blue, .purple, .indigo, .cyan, .mint, .pink, .orange, .teal]
-        return palette[index % palette.count].opacity(0.8)
+    private static func hitTest(location: CGPoint, nodes: [SpaceNode], layout: [CGRect]) -> SpaceNode? {
+        for (index, node) in nodes.enumerated() where index < layout.count {
+            if layout[index].contains(location) { return node }
+        }
+        return nil
     }
 
-    /// Slice-and-dice treemap: recursively splits the rectangle in alternating
-    /// horizontal/vertical directions, proportional to each folder's size.
-    private static func treemap(_ items: [FolderSize], in rect: CGRect, depth: Int = 0) -> [TreemapRect] {
-        guard !items.isEmpty, rect.width > 0, rect.height > 0 else { return [] }
-        let total = items.reduce(Int64(0)) { $0 + $1.size }
-        guard total > 0 else { return [] }
-
-        let sorted = items.sorted { $0.size > $1.size }
-        if sorted.count == 1 {
-            return [TreemapRect(folder: sorted[0], rect: rect)]
+    private static func color(for node: SpaceNode, index: Int) -> Color {
+        if node.isDirectory {
+            let palette: [Color] = [
+                Color(red: 0.33, green: 0.50, blue: 0.94),
+                Color(red: 0.46, green: 0.35, blue: 0.96),
+                Color(red: 0.29, green: 0.69, blue: 0.90),
+                Color(red: 0.43, green: 0.67, blue: 0.41),
+                Color(red: 0.95, green: 0.61, blue: 0.29),
+                Color(red: 0.92, green: 0.44, blue: 0.54),
+            ]
+            return palette[index % palette.count]
         }
-
-        var splitIndex = 0
-        var accumulated: Int64 = 0
-        let half = Double(total) / 2.0
-        for (index, item) in sorted.enumerated() {
-            accumulated += item.size
-            splitIndex = index
-            if Double(accumulated) >= half { break }
-        }
-        let left = Array(sorted[0...splitIndex])
-        let right = Array(sorted[(splitIndex + 1)...])
-        guard !left.isEmpty, !right.isEmpty else {
-            return [TreemapRect(folder: sorted[0], rect: rect)]
-        }
-
-        let leftTotal = left.reduce(Int64(0)) { $0 + $1.size }
-        let ratio = CGFloat(Double(leftTotal) / Double(total))
-
-        let horizontal = depth.isMultiple(of: 2)
-        if horizontal {
-            let leftRect = CGRect(x: rect.minX, y: rect.minY,
-                                  width: rect.width * ratio, height: rect.height)
-            let rightRect = CGRect(x: rect.minX + rect.width * ratio, y: rect.minY,
-                                   width: rect.width * (1 - ratio), height: rect.height)
-            return treemap(left, in: leftRect, depth: depth + 1)
-                + treemap(right, in: rightRect, depth: depth + 1)
-        } else {
-            let leftRect = CGRect(x: rect.minX, y: rect.minY,
-                                  width: rect.width, height: rect.height * ratio)
-            let rightRect = CGRect(x: rect.minX, y: rect.minY + rect.height * ratio,
-                                   width: rect.width, height: rect.height * (1 - ratio))
-            return treemap(left, in: leftRect, depth: depth + 1)
-                + treemap(right, in: rightRect, depth: depth + 1)
+        switch node.category {
+        case .media:    return Color(red: 0.90, green: 0.36, blue: 0.52)
+        case .sql:      return Color(red: 0.96, green: 0.69, blue: 0.29)
+        case .archive:  return Color(red: 0.94, green: 0.57, blue: 0.26)
+        case .image:    return Color(red: 0.33, green: 0.75, blue: 0.58)
+        case .document: return Color(red: 0.36, green: 0.65, blue: 0.93)
+        case .app:      return Color(red: 0.52, green: 0.76, blue: 0.40)
+        case .other:    return Color(red: 0.58, green: 0.60, blue: 0.66)
         }
     }
 }

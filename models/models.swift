@@ -49,6 +49,35 @@ struct FolderSize: Identifiable, Hashable {
     let size: Int64
 }
 
+struct SpaceNode: Identifiable, Sendable {
+    let id = UUID()
+    let name: String
+    let url: URL
+    let size: Int64
+    let isDirectory: Bool
+
+    var category: FileCategory {
+        switch url.pathExtension.lowercased() {
+        case "sql", "sqlite", "db", "dump", "sql.gz":
+            return .sql
+        case "mov", "mp4", "m4v", "avi", "mkv", "webm",
+             "mp3", "wav", "aiff", "m4a", "flac", "aac":
+            return .media
+        case "zip", "tar", "gz", "bz2", "7z", "rar", "tgz", "xz":
+            return .archive
+        case "dmg", "iso", "img":
+            return .image
+        case "doc", "docx", "pdf", "pages", "numbers", "key",
+             "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "md":
+            return .document
+        case "app":
+            return .app
+        default:
+            return .other
+        }
+    }
+}
+
 enum JunkCategory: String, Sendable {
     case caches = "User Caches"
     case logs = "Logs"
