@@ -548,6 +548,7 @@ struct MemoryView: View {
 
 struct CleanerView: View {
     @ObservedObject var scanner: DiskScanner
+    @ObservedObject var cleaner = DailyCleaner.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -614,9 +615,38 @@ struct CleanerView: View {
                         }
                     }
                 }
+
+                Section("Automatic Daily Cleaning") {
+                    Toggle("Enable daily cleaning", isOn: $cleaner.enabled)
+                    if cleaner.enabled {
+                        Picker("Run at", selection: $cleaner.hour) {
+                            ForEach(0..<24, id: \.self) { hour in
+                                Text(Self.hourLabel(hour)).tag(hour)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        Toggle("Empty Trash", isOn: $cleaner.emptyTrashEnabled)
+                        Toggle("Clean leftovers", isOn: $cleaner.cleanLeftoversEnabled)
+                        Toggle("Clear caches", isOn: $cleaner.clearCachesEnabled)
+                        Toggle("Clear logs", isOn: $cleaner.clearLogsEnabled)
+                        if let summary = cleaner.lastCleanSummary {
+                            LabeledContent("Last run") {
+                                Text("\(summary) · \(cleaner.lastCleanDate?.formatted(date: .abbreviated, time: .shortened) ?? "")")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Button("Run Now") { cleaner.runDailyClean() }
+                            .disabled(cleaner.isCleaning)
+                    }
+                }
             }
             .listStyle(.inset)
         }
+    }
+
+    private static func hourLabel(_ hour: Int) -> String {
+        let date = Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: Date()) ?? Date()
+        return date.formatted(date: .omitted, time: .shortened)
     }
 }
 

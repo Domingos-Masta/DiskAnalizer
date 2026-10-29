@@ -26,6 +26,7 @@ fi
 swiftc -O \
     main.swift \
     app/app.swift \
+    app/cleaner.swift \
     app/monitor.swift \
     helpers/helpers.swift \
     models/models.swift \

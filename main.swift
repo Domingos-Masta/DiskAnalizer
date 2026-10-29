@@ -1,7 +1,8 @@
 // main.swift — Disk Store: a small disk-space analyzer for macOS
 // Build app bundle:  ./build.sh        (output: build/DiskStore.app)
-// Build plain binary: swiftc -O main.swift app/app.swift app/monitor.swift \
-//                     helpers/helpers.swift models/models.swift ui/ui.swift -o DiskStore
+// Build plain binary: swiftc -O main.swift app/app.swift app/cleaner.swift \
+//                     app/monitor.swift helpers/helpers.swift models/models.swift \
+//                     ui/ui.swift -o DiskStore
 // Requires macOS 13+ and Xcode Command Line Tools.
 
 import AppKit
@@ -30,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.showWindow()
         }
         SystemMonitor.shared.start()
+        DailyCleaner.shared.start()
         activateApp()
     }
 

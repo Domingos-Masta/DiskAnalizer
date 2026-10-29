@@ -12,6 +12,7 @@ A lightweight macOS disk-space analyzer and system cleaner built with SwiftUI.
 - **Unused Apps** — apps not opened in 6+ months, with uninstall (move to Trash).
 - **Memory** — memory stats, pressure level, top 5 apps by RAM, and a "Free Up RAM" action.
 - **Cleaner** — user Trash size + "Empty Trash", and leftovers left behind by uninstalled apps.
+- **Automatic daily cleaning** — schedules a daily run (while the app is open) to empty the Trash, clean leftovers, and optionally clear caches/logs. Configured from the Cleaner screen.
 - **Menu bar monitor** — a `rays` status item showing disk/memory/CPU and quick actions; toggle it from the top bar.
 - **Realtime alerts** — system notifications (plus in-app alerts) when the disk is almost full, memory is critically low, or CPU usage is high.
 
