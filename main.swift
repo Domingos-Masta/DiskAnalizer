@@ -1,8 +1,8 @@
 // main.swift — Disk Store: a small disk-space analyzer for macOS
 // Build app bundle:  ./build.sh        (output: build/DiskStore.app)
 // Build plain binary: swiftc -O main.swift app/app.swift app/cleaner.swift \
-//                     app/monitor.swift helpers/helpers.swift models/models.swift \
-//                     ui/ui.swift -o DiskStore
+//                     app/monitor.swift app/optimizer.swift helpers/helpers.swift \
+//                     models/models.swift ui/ui.swift -o DiskStore
 // Requires macOS 13+ and Xcode Command Line Tools.
 
 import AppKit
@@ -10,7 +10,7 @@ import Foundation
 import SwiftUI
 
 // MARK: - App bootstrap
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var statusBar: StatusBarController?
 
@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         w.title = "Disk Store"
         w.contentView = NSHostingView(rootView: ContentView())
+        w.delegate = self
         w.center()
         w.makeKeyAndOrderFront(nil)
         self.window = w
@@ -36,7 +37,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         activateApp()
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { showWindow() }
+        return true
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closing = notification.object as? NSWindow, closing === window else { return }
+        // Keep running in the background. If the menu bar monitor is visible,
+        // drop the Dock icon and live in the tray; otherwise keep the Dock icon
+        // so the app can still be reopened.
+        if SystemMonitor.shared.menuBarEnabled {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
 
     @MainActor
     private func applyAppIcon() {
@@ -47,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     private func showWindow() {
+        NSApp.setActivationPolicy(.regular)
         window?.makeKeyAndOrderFront(nil)
         activateApp()
     }

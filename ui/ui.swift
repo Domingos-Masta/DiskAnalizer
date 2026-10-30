@@ -14,6 +14,7 @@ enum DiskScreen: String, CaseIterable, Identifiable {
     case spaceLens = "Space Lens"
     case memory = "Memory"
     case cleaner = "Cleaner"
+    case optimization = "Optimization"
     case about = "About"
 
     var id: String { rawValue }
@@ -28,6 +29,7 @@ enum DiskScreen: String, CaseIterable, Identifiable {
         case .spaceLens:  return "square.grid.3x3.fill"
         case .memory:     return "memorychip"
         case .cleaner:    return "sparkles"
+        case .optimization: return "gearshape.2"
         case .about:      return "info.circle"
         }
     }
@@ -1030,6 +1032,241 @@ struct SpaceLensView: View {
     }
 }
 
+struct OptimizationView: View {
+    @ObservedObject private var optimizer = Optimizer.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Optimization").font(.largeTitle.bold())
+                    Spacer()
+                    if optimizer.isRefreshing { ProgressView().controlSize(.small) }
+                    Button("Refresh") { optimizer.refresh() }
+                }
+
+                if let notice = optimizer.notice {
+                    Text(notice)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                maintenanceSection
+                backgroundProcessesSection
+                frozenAppsSection
+                loginItemsSection
+                launchAgentsSection
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .onAppear { optimizer.refresh() }
+    }
+
+    private var maintenanceSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(MaintenanceTask.allCases) { task in
+                    HStack(spacing: 12) {
+                        Image(systemName: task.icon)
+                            .frame(width: 22)
+                            .foregroundStyle(Color.accentColor)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(task.rawValue).font(.body.weight(.medium))
+                            Text(task.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if optimizer.activeMaintenanceTask == task {
+                            ProgressView().controlSize(.small)
+                        }
+                        Button("Run") { optimizer.runMaintenance(task) }
+                            .disabled(optimizer.activeMaintenanceTask != nil)
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                if !optimizer.maintenanceLog.isEmpty {
+                    Divider()
+                    ForEach(optimizer.maintenanceLog.prefix(8)) { entry in
+                        HStack(spacing: 8) {
+                            Image(systemName: entry.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .foregroundStyle(entry.success ? Color.green : Color.red)
+                            Text(entry.task.rawValue).font(.caption.bold())
+                            Text(entry.message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .padding(8)
+        } label: {
+            Label("Maintenance Tasks", systemImage: "wrench.and.screwdriver.fill")
+        }
+    }
+
+    private var backgroundProcessesSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                if optimizer.processes.isEmpty {
+                    Text(optimizer.isRefreshing ? "Reading processes…" : "No processes found.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(optimizer.processes.prefix(15)) { process in
+                        HStack(spacing: 12) {
+                            Image(systemName: process.isApplication ? "app.fill" : "gearshape.2")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(process.name)
+                                    .font(.body.weight(.medium))
+                                    .lineLimit(1).truncationMode(.middle)
+                                Text("PID \(process.pid)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(String(format: "%.1f%% CPU", process.cpuPercent))
+                                .font(.callout.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            Text(process.memoryBytes.formattedBytes)
+                                .font(.callout.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 90, alignment: .trailing)
+                            Button("Terminate") { optimizer.terminate(process, force: false) }
+                            Button("Force Quit", role: .destructive) {
+                                optimizer.terminate(process, force: true)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .padding(8)
+        } label: {
+            Label("Background Processes", systemImage: "list.bullet.rectangle")
+        }
+    }
+
+    private var frozenAppsSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Unresponsive applications")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Detect") { optimizer.detectFrozen() }
+                }
+                if optimizer.frozenApps.isEmpty {
+                    Text("No frozen applications detected.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(optimizer.frozenApps) { app in
+                        HStack(spacing: 12) {
+                            Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(app.name).font(.body.weight(.medium))
+                                Text("PID \(app.pid)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Force Quit", role: .destructive) {
+                                optimizer.terminateFrozen(app)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .padding(8)
+        } label: {
+            Label("Frozen Apps", systemImage: "xmark.octagon")
+        }
+    }
+
+    private var loginItemsSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                if optimizer.loginItems.isEmpty {
+                    Text("No login items found. If items exist, grant Disk Store Automation access in System Settings → Privacy & Security.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(optimizer.loginItems) { item in
+                        HStack(spacing: 12) {
+                            Image(systemName: "person.crop.circle")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name).font(.body.weight(.medium))
+                                if !item.path.isEmpty {
+                                    Text(item.path)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1).truncationMode(.middle)
+                                }
+                            }
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { item.enabled },
+                                set: { _ in optimizer.toggleLoginItem(item) }
+                            ))
+                            .toggleStyle(.switch)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .padding(8)
+        } label: {
+            Label("Login Items", systemImage: "person.crop.circle.badge.checkmark")
+        }
+    }
+
+    private var launchAgentsSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                if optimizer.launchAgents.isEmpty {
+                    Text(optimizer.isRefreshing ? "Reading launch agents…" : "No launch agents found.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(optimizer.launchAgents) { agent in
+                        HStack(spacing: 12) {
+                            Image(systemName: agent.scope == .user ? "house.fill" : "building.2.fill")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(agent.label).font(.body.weight(.medium))
+                                if !agent.program.isEmpty {
+                                    Text(agent.program)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1).truncationMode(.middle)
+                                }
+                            }
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { !agent.disabled },
+                                set: { enabled in optimizer.toggleLaunchAgent(agent, enable: enabled) }
+                            ))
+                            .toggleStyle(.switch)
+                            .help("\(agent.scope.rawValue) launch agent")
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .padding(8)
+        } label: {
+            Label("Launch Agents", systemImage: "gearshape.2.fill")
+        }
+    }
+}
+
 struct AboutView: View {
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -1052,6 +1289,7 @@ struct AboutView: View {
                 Label("Disk usage, large files, duplicates and junk cleanup", systemImage: "internaldrive")
                 Label("Unused apps and leftover detection", systemImage: "app.badge")
                 Label("Memory monitor and top apps by RAM", systemImage: "memorychip")
+                Label("Optimization, login items and maintenance tasks", systemImage: "gearshape.2")
                 Label("Menu bar monitor with realtime alerts", systemImage: "rays")
             }
             .foregroundStyle(.secondary)
@@ -1079,7 +1317,7 @@ struct ContentView: View {
                         }
                     }
                     Section("Optimize") {
-                        ForEach([DiskScreen.unusedApps, .memory, .cleaner]) { s in
+                        ForEach([DiskScreen.unusedApps, .memory, .cleaner, .optimization]) { s in
                             Label(s.rawValue, systemImage: s.icon)
                                 .tag(s)
                         }
@@ -1104,6 +1342,7 @@ struct ContentView: View {
                 case .unusedApps: UnusedAppsView(scanner: scanner)
                 case .memory:     MemoryView(scanner: scanner)
                 case .cleaner:    CleanerView(scanner: scanner)
+                case .optimization: OptimizationView()
                 case .about:      AboutView()
                 }
             }

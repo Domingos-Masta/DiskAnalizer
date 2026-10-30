@@ -163,3 +163,81 @@ struct MemoryStats: Sendable {
         }
     }
 }
+
+// MARK: - Optimization module
+
+enum LaunchAgentScope: String, Sendable {
+    case user = "User"
+    case system = "System"
+}
+
+struct LaunchAgentItem: Identifiable, Sendable {
+    let id = UUID()
+    let label: String
+    let url: URL
+    let scope: LaunchAgentScope
+    let program: String
+    let runAtLoad: Bool
+    var disabled: Bool
+}
+
+struct LoginItem: Identifiable, Sendable {
+    let id = UUID()
+    let name: String
+    let path: String
+    var enabled: Bool
+}
+
+struct RunningProcess: Identifiable, Sendable {
+    let id = UUID()
+    let pid: Int32
+    let name: String
+    let cpuPercent: Double
+    let memoryBytes: Int64
+    let isApplication: Bool
+}
+
+struct FrozenApp: Identifiable, Sendable {
+    let id = UUID()
+    let pid: Int32
+    let name: String
+}
+
+enum MaintenanceTask: String, CaseIterable, Identifiable, Sendable {
+    case freeRAM = "Free Up RAM"
+    case purgeDiskSpace = "Purge Purgeable Disk Space"
+    case reindexSpotlight = "Reindex Spotlight"
+    case repairPermissions = "Repair Disk & Folder Permissions"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .freeRAM:           return "memorychip"
+        case .purgeDiskSpace:    return "externaldrive.badge.minus"
+        case .reindexSpotlight:  return "magnifyingglass"
+        case .repairPermissions: return "lock.shield"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .freeRAM:
+            return "Runs purge to release inactive memory."
+        case .purgeDiskSpace:
+            return "Thins local Time Machine snapshots to reclaim purgeable space."
+        case .reindexSpotlight:
+            return "Erases and rebuilds the Spotlight index."
+        case .repairPermissions:
+            return "Resets permissions on the current user's home folder."
+        }
+    }
+}
+
+struct MaintenanceLogEntry: Identifiable, Sendable {
+    let id = UUID()
+    let task: MaintenanceTask
+    let success: Bool
+    let message: String
+    let date: Date
+}

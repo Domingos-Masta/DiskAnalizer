@@ -28,6 +28,7 @@ swiftc -O \
     app/app.swift \
     app/cleaner.swift \
     app/monitor.swift \
+    app/optimizer.swift \
     helpers/helpers.swift \
     models/models.swift \
     ui/ui.swift \
